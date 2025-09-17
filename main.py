@@ -1,7 +1,7 @@
 # --- Importações ---
 import streamlit as st
 import pandas as pd
-from psm_logic import (
+from utils.psm_logic import (
     run_balance_tests, 
     perform_psm_analysis, 
     to_excel, 
