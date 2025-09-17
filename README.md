@@ -33,7 +33,7 @@ Ao balancear as covariáveis entre os grupos, a ferramenta ajuda a mitigar viese
 
 1.  **Navegue até a pasta do projeto:**
     ```bash
-    cd psm
+    cd psm-causality
     ```
 
 2.  **Crie o ambiente virtual:**
@@ -64,7 +64,7 @@ Ao balancear as covariáveis entre os grupos, a ferramenta ajuda a mitigar viese
 Com o ambiente virtual ainda ativo, inicie a aplicação Streamlit:
 
 ```bash
-streamlit run app.py
+streamlit run main.py
 ```
 
 A aplicação será aberta automaticamente no seu navegador.
@@ -83,13 +83,14 @@ A aplicação será aberta automaticamente no seu navegador.
 ## Estrutura do Projeto
 
 ```
-psm/
+psm-causality/
 ├── data/                  # Pasta para armazenar os datasets
 │   ├── groupon.csv
 │   └── ...
-├── app.py                 # Código principal da aplicação Streamlit (interface)
-├── psm_logic.py           # Funções de backend para a lógica do PSM
-├── generate_data_sdv.py   # Script para gerar dados sintéticos (opcional)
+├── utils/                 # Módulos de suporte
+│   ├── psm_logic.py         # Funções de backend para a lógica do PSM
+│   └── generate_data_sdv.py # Script para gerar dados sintéticos
+├── main.py                # Código principal da aplicação Streamlit
 ├── requirements.txt       # Lista de dependências Python
 └── README.md              # Este arquivo
 ```
