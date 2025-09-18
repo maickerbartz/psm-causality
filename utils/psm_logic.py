@@ -1,6 +1,7 @@
 # --- Importações ---
 import pandas as pd
 from scipy.stats import chi2_contingency, ttest_ind, mannwhitneyu
+from scipy.spatial.distance import cdist
 import statsmodels.api as sm
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
@@ -168,36 +169,69 @@ def perform_psm_analysis(
     feature_importance_df['Importância (Absoluta)'] = feature_importance_df['Coeficiente'].abs()
     feature_importance_df = feature_importance_df.sort_values(by='Importância (Absoluta)', ascending=False)
 
-    # --- 3. Pareamento ---
+    # --- 3. Pareamento Híbrido: KNN no PS + Distância de Mahalanobis nas Covariáveis ---
     treatment_df = df_processed[y == 1]
     control_df = df_processed[y == 0]
+    
+    # Prepara os dados para o cálculo da distância de Mahalanobis
+    X_covariates = df_processed[final_covariates]
+    control_covariates = X_covariates.loc[control_df.index]
+    
+    try:
+        inv_cov_matrix = np.linalg.inv(np.cov(control_covariates.T))
+    except np.linalg.LinAlgError:
+        inv_cov_matrix = np.linalg.pinv(np.cov(control_covariates.T))
 
-    nn = NearestNeighbors(n_neighbors=1, algorithm='ball_tree', n_jobs=-1)
-    nn.fit(control_df[['ps']])
-    distances, indices = nn.kneighbors(treatment_df[['ps']])
+    # --- Execução do Pareamento ---
+    # 1. Encontrar os k vizinhos mais próximos no espaço do propensity score para pré-selecionar
+    K_NEIGHBORS = 5 
+    nn_ps = NearestNeighbors(n_neighbors=K_NEIGHBORS, algorithm='ball_tree', n_jobs=-1)
+    nn_ps.fit(control_df[['ps']])
     
+    # Encontra os k candidatos para cada tratado
+    _, candidate_indices_ps = nn_ps.kneighbors(treatment_df[['ps']])
+    
+    # Listas para armazenar os pares finais
     treatment_indices = treatment_df.index
-    matched_control_indices = control_df.index[indices.flatten()]
+    matched_control_indices_list = []
+    ps_distances = []
     
+    # 2. Para cada tratado, encontrar o melhor par (menor dist. Mahalanobis) entre os k candidatos
+    for i, treated_idx in enumerate(treatment_indices):
+        candidate_control_indices_pos = candidate_indices_ps[i]
+        actual_candidate_indices = control_df.index[candidate_control_indices_pos]
+        
+        treated_cov = X_covariates.loc[treated_idx].values.reshape(1, -1)
+        candidate_covs = X_covariates.loc[actual_candidate_indices].values
+        
+        m_distances = cdist(treated_cov, candidate_covs, metric='mahalanobis', VI=inv_cov_matrix)
+        
+        best_candidate_pos = np.argmin(m_distances)
+        best_control_idx = actual_candidate_indices[best_candidate_pos]
+        
+        matched_control_indices_list.append(best_control_idx)
+        
+        ps_dist = abs(df_processed.loc[treated_idx, 'ps'] - df_processed.loc[best_control_idx, 'ps'])
+        ps_distances.append(ps_dist)
+
+    matched_control_indices = pd.Index(matched_control_indices_list)
+
     matched_pairs = pd.DataFrame({
         'treatment_index': treatment_indices,
         'control_index': matched_control_indices,
-        'distance': distances.flatten()
+        'distance': ps_distances
     })
 
     all_matched_indices = treatment_indices.union(matched_control_indices)
     df_matched = df.loc[all_matched_indices]
 
-    # --- 4. Cálculo do Caliper para Diagnóstico ---
-    # Calcula o logit do propensity score, tratando valores extremos para evitar infinito
+    # --- 4. Cálculo do Caliper para Diagnóstico (sem descarte) ---
+    # Calcula o logit do propensity score para avaliar a qualidade do par
     ps = df_processed['ps']
-    logit_ps = np.log(ps / (1 - ps + 1e-9)) # Adiciona pequeno epsilon para estabilidade
-    
-    # Define a largura do caliper com base na regra de Rosenbaum & Rubin
+    logit_ps = np.log(ps / (1 - ps + 1e-9))
     caliper_width = 0.2 * logit_ps.std()
     
-    # Adiciona uma flag de qualidade aos pares
-    # A comparação é feita no logit do PS, que é onde a métrica do desvio padrão faz sentido
+    # A comparação é feita no logit do PS para a flag de qualidade
     logit_ps_treated = logit_ps.loc[matched_pairs['treatment_index']].values
     logit_ps_control = logit_ps.loc[matched_pairs['control_index']].values
     distance_logit = np.abs(logit_ps_treated - logit_ps_control)
@@ -211,8 +245,7 @@ def perform_psm_analysis(
         'Unidades de Controle (Original)': len(control_df),
         'Unidades de Controle Pareadas (Total)': len(matched_control_indices),
         'Unidades de Controle Pareadas (Únicas)': matched_control_indices.nunique(),
-        'Unidades Tratadas Perdidas': 0,
-        'Unidades Fora do Caliper (Sugestão de Remoção)': unidades_fora_do_caliper,
+        'Unidades Fora do Caliper (Diagnóstico)': unidades_fora_do_caliper,
         'Total de Unidades no Dataset Pareado': len(df_matched)
     }
     summary_df = pd.DataFrame([summary_stats]).T.reset_index()
